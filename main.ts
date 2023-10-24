@@ -3,31 +3,40 @@ interface Token {
     value: string
 }
 
-interface Literal {
-    value: string
+interface LispASTNode {
+    type:
+        | "NumberLiteral"
+        | "StringLiteral"
+        | "CallExpression"
+        | "Program"
+    value?: string
+    params?: LispASTNode[]
+    name?: string
+    body?: LispASTNode[]
+    _newAstRef?: CASTNode[]
 }
 
-interface NumberLiteral extends Literal {
-    type: "NumberLiteral"
+interface CASTNode {
+    type:
+        | "NumberLiteral"
+        | "StringLiteral"
+        | "CallExpression"
+        | "ExpressionStatement"
+        | "Identifier"
+        | "Program"
+    value?: string
+    callee?: CASTNode
+    arguments?: CASTNode[]
+    name?: string
+    body?: CASTNode[]
+    expression?: CASTNode
 }
 
-interface StringLiteral extends Literal {
-    type: "StringLiteral"
-}
-
-interface CallExpression {
-    type: "CallExpression"
-    name: string
-    params: ASTNode[]
-}
-
-type ASTNode = NumberLiteral 
-    | StringLiteral 
-    | CallExpression
-
-interface AST {
-    type: string
-    body: ASTNode[]
+type Visitor = {
+    [key in LispASTNode["type"]]?: {
+        enter?(node: LispASTNode, parent: LispASTNode | null): void
+        exit?(node: LispASTNode, parent: LispASTNode | null): void
+    }
 }
 
 function tokenizer(input: string): Token[] {
@@ -43,26 +52,26 @@ function tokenizer(input: string): Token[] {
     const LETTER = /[a-z]/i
 
     let i = 0
-    while(i < input.length) {
+    while (i < input.length) {
         let char = input[i]
 
-        if(parens.has(char)) {
+        if (parens.has(char)) {
             tokens.push({ type: parens.get(char)!, value: char })
-            ++i
+            ;++i
             continue
         }
 
-        if(WHITESPACE.test(char)) {
-            ++i
+        if (WHITESPACE.test(char)) {
+            ;++i
             continue
         }
 
-        if(NUMBER.test(char)) {
+        if (NUMBER.test(char)) {
             let value = ""
             value += char
             char = input[++i]
 
-            while(NUMBER.test(char)) {
+            while (NUMBER.test(char)) {
                 value += char
                 char = input[++i]
             }
@@ -71,11 +80,11 @@ function tokenizer(input: string): Token[] {
             continue
         }
 
-        if(char === '"') {
+        if (char === '"') {
             let value = ""
 
             char = input[++i]
-            while(char !== '"') {
+            while (char !== '"') {
                 value += char
                 char = input[++i]
             }
@@ -85,12 +94,12 @@ function tokenizer(input: string): Token[] {
             continue
         }
 
-        if(LETTER.test(char)) {
+        if (LETTER.test(char)) {
             let value = ""
             value += char
             char = input[++i]
 
-            while(LETTER.test(char)) {
+            while (LETTER.test(char)) {
                 value += char
                 char = input[++i]
             }
@@ -105,71 +114,198 @@ function tokenizer(input: string): Token[] {
     return tokens
 }
 
-function parser(tokens: Token[]): AST {
-    const ast: AST = {
+function parser(tokens: Token[]): LispASTNode {
+    const ast: LispASTNode = {
         type: "Program",
         body: [],
     }
 
     let i = 0
-    while(i < tokens.length) {
+    while (i < tokens.length) {
         const node = walk()
-        ast.body.push(node)
+        ast.body!.push(node)
     }
 
-    function walk(): ASTNode {
+    function walk(): LispASTNode {
         let token = tokens[i]
- 
-        if(token.type === "number") {
-            ++i
-            return { 
-                type: "NumberLiteral", 
-                value: token.value 
+
+        if (token.type === "number") {
+            ;++i
+            return {
+                type: "NumberLiteral",
+                value: token.value,
             }
         }
 
-        if(token.type === "string") {
-            ++i
+        if (token.type === "string") {
+            ;++i
             return {
                 type: "StringLiteral",
-                value: token.value
+                value: token.value,
             }
         }
 
-        if(token.type === "paren" && token.value === "(") {
+        if (token.type === "paren" && token.value === "(") {
             token = tokens[++i]
 
-            const node: ASTNode = {
+            const node: LispASTNode = {
                 type: "CallExpression",
                 name: token.value,
-                params: []
+                params: [],
             }
 
             token = tokens[++i]
 
-            while(
-                token.type !== "paren" || 
+            while (
+                token.type !== "paren" ||
                 (token.type === "paren" && token.value !== ")")
             ) {
                 const paramNode = walk()
-                node.params.push(paramNode)
+                node.params!.push(paramNode)
                 token = tokens[i]
             }
 
-            ++i
+            ;++i
             return node
         }
 
-        throw new TypeError("Token not identified: " + token.type + " " + token.value)
+        throw new TypeError(
+            "Token not identified: " + token.type + " " + token.value,
+        )
     }
 
     return ast
 }
 
-const sample_input = "(add 2 (substract 4 2))"
+function traverser(ast: LispASTNode, visitor: Visitor) {
+    function traverseArray(nodes: LispASTNode[], parent: LispASTNode | null) {
+        nodes.forEach(node => {
+            traverseNode(node, parent)
+        })
+    }
+
+    function traverseNode(node: LispASTNode, parent: LispASTNode | null) {
+        const methods = visitor[node.type]
+
+        if(methods && methods.enter) {
+            methods.enter(node, parent)
+        }
+
+        switch(node.type) {
+            case "Program":
+                traverseArray(node.body!, node)
+                break
+            case "CallExpression":
+                traverseArray(node.params!, node)
+                break
+            case "NumberLiteral":
+            case "StringLiteral":
+                break;
+            default:
+                throw new TypeError()
+        }
+
+        if(methods && methods.exit) {
+            methods.exit(node, parent)
+        }
+    }
+
+    traverseNode(ast, null)
+}
+
+function transformer(ast: LispASTNode): CASTNode {
+    const newAst: LispASTNode = {
+        type: "Program",
+        body: []
+    }
+
+    ast._newAstRef = newAst.body
+
+    traverser(ast, {
+        NumberLiteral: {
+            enter(node, parent) {
+                parent?._newAstRef?.push({
+                    type: "NumberLiteral",
+                    value: node.value
+                })
+            }
+        },
+        StringLiteral: {
+            enter(node, parent) {
+                parent?._newAstRef?.push({
+                    type: "StringLiteral",
+                    value: node.value
+                })
+            }
+        },
+        CallExpression: {
+            enter(node, parent) {
+                let expression: CASTNode = {
+                    type: "CallExpression",
+                    callee: {
+                        type: "Identifier",
+                        name: node.name
+                    },
+                    arguments: [],
+                }
+
+                node._newAstRef = expression.arguments
+
+                if(parent?.type !== "CallExpression") {
+                    expression = {
+                        type: "ExpressionStatement",
+                        expression: expression
+                    }
+                }
+                
+                parent?._newAstRef?.push(expression)
+            }
+        }
+    })
+
+    return newAst
+}
+
+function codeGenerator(ast: CASTNode): string {
+    switch(ast.type) {
+        case "NumberLiteral":
+            return ast.value!
+        case "StringLiteral":
+            return '"' + ast.value! + '"'
+        case "Identifier":
+            return ast.name!
+        case "CallExpression":
+            return (
+                codeGenerator(ast.callee!) +
+                "(" +
+                ast.arguments!.map(codeGenerator).join(", ") +
+                ")"
+            )
+        case "ExpressionStatement":
+            return codeGenerator(ast.expression!) + ";"
+        case "Program":
+            return ast.body!.map(codeGenerator).join("\n")
+        default:
+            throw new TypeError(ast.type)
+    }
+}
+
+// const sample_input = "(add 2 (substract 4 2))"
+
+const sample_input = prompt("Enter Lisp code: ")
+
+if(sample_input === null) {
+    throw new TypeError("No input provided")
+}
 
 const tokens = tokenizer(sample_input)
 const ast = parser(tokens)
+const newAst = transformer(ast)
+const sample_output = codeGenerator(newAst)
 
-console.log(tokens)
-console.log(ast)
+console.log(sample_input)
+console.log(sample_output)
+
+// console.log(tokens)
+// console.log(JSON.stringify(ast, null, 2))
+// console.log(JSON.stringify(newAst, null, 2))
